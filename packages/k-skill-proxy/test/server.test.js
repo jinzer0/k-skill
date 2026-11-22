@@ -2126,7 +2126,7 @@ test("rate limit separates clients behind two trusted proxy hops", async (t) => 
   const app = buildServer({
     env: {
       KSKILL_PROXY_RATE_LIMIT_MAX: "1",
-      KSKILL_PROXY_TRUST_PROXY_HOPS: "2"
+      KSKILL_PROXY_TRUSTED_PROXIES: "192.0.2.20, 192.0.2.32/28"
     }
   });
 
@@ -2137,8 +2137,9 @@ test("rate limit separates clients behind two trusted proxy hops", async (t) => 
   const request = (clientIp) => app.inject({
     method: "GET",
     url: "/v1/korean-stock/search?q=%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90&bas_dd=20260404",
+    remoteAddress: "192.0.2.20",
     headers: {
-      "x-forwarded-for": `203.0.113.200, ${clientIp}, 35.191.0.1`
+      "x-forwarded-for": `${clientIp}, 192.0.2.33`
     }
   });
 
@@ -2150,6 +2151,13 @@ test("rate limit separates clients behind two trusted proxy hops", async (t) => 
   assert.equal(secondClient.statusCode, 503);
   assert.equal(firstClientAgain.statusCode, 429);
   assert.equal(firstClientAgain.json().error, "rate_limited");
+});
+
+test("rejects invalid or catch-all trusted proxy entries", () => {
+  for (const value of ["proxy.example", "0.0.0.0/0", "::/0", "192.0.2.0/33"]) {
+    assert.throws(() => buildServer({ env: { KSKILL_PROXY_TRUSTED_PROXIES: value } }),
+      /KSKILL_PROXY_TRUSTED_PROXIES/);
+  }
 });
 
 test("korean stock search surfaces degraded upstream metadata when another market fails", async (t) => {
