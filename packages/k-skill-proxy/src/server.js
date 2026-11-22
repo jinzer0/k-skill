@@ -1,5 +1,6 @@
 // allow: SIZE_OK - Central Fastify composition root; provider logic is split into route modules.
 const crypto = require("node:crypto");
+const { isIP } = require("node:net");
 const Fastify = require("fastify");
 const { LogController } = Fastify;
 const {
@@ -239,8 +240,25 @@ function buildConfig(env = process.env) {
     rateLimitWindowMs: parseInteger(env.KSKILL_PROXY_RATE_LIMIT_WINDOW_MS, 60000),
     rateLimitMax: parseInteger(env.KSKILL_PROXY_RATE_LIMIT_MAX, 60),
     rateLimitMaxClients: Math.max(1, parseInteger(env.KSKILL_PROXY_RATE_LIMIT_MAX_CLIENTS, 10000)),
-    trustProxyHops: Math.max(0, parseInteger(env.KSKILL_PROXY_TRUST_PROXY_HOPS, 0))
+    trustedProxies: parseTrustedProxies(env.KSKILL_PROXY_TRUSTED_PROXIES)
   };
+}
+
+// Only address-based trust is supported; an unknown peer cannot supply a
+// client identity. Never fall back to hop-count-only forwarding.
+function parseTrustedProxies(value) {
+  if (!value || !value.trim()) return [];
+  return value.split(",").map((entry) => {
+    const proxy = entry.trim();
+    const [address, length, ...rest] = proxy.split("/");
+    const family = isIP(address);
+    const max = family === 4 ? 32 : 128;
+    if (!family || rest.length || (length !== undefined &&
+        (!/^\d+$/.test(length) || Number(length) < 1 || Number(length) > max))) {
+      throw new Error("KSKILL_PROXY_TRUSTED_PROXIES must contain explicit IP addresses or non-zero CIDRs");
+    }
+    return proxy;
+  });
 }
 
 function makeCacheKey(payload) {
@@ -2093,7 +2111,7 @@ function buildServer({ env = process.env, provider = null, now = () => new Date(
   const app = Fastify({
     logger: true,
     logController: new LogController({ disableRequestLogging: true }),
-    trustProxy: config.trustProxyHops || false
+    trustProxy: config.trustedProxies.length ? config.trustedProxies : false
   });
 
   app.decorate("configValues", config);
